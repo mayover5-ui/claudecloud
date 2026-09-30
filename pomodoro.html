@@ -1,0 +1,191 @@
+<title>ポモドーロ集中タイマー</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
+<style>
+/* Layout: one centered instrument — mode switch, progress ring with digits, controls, cycle beads */
+:root {
+  --bg: #f3f5f2;
+  --surface: #ffffff;
+  --fg: #1f2a24;
+  --muted: #66736b;
+  --line: #d7ddd8;
+  --focus: #c8472f;
+  --rest: #2f7d6a;
+  --accent: var(--focus);
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "DM Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141916; --surface: #1c2320; --fg: #e6ece8; --muted: #93a199; --line: #2e3833;
+    --focus: #ec6a50; --rest: #52b39a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141916; --surface: #1c2320; --fg: #e6ece8; --muted: #93a199; --line: #2e3833;
+  --focus: #ec6a50; --rest: #52b39a; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.6; padding: 0 16px; }
+.wrap { max-width: 440px; margin: 0 auto; padding-block: 32px 48px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+body.rest { --accent: var(--rest); }
+h1 { font-size: 13px; letter-spacing: .12em; color: var(--muted); font-weight: 700; margin: 0; }
+.modes { display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px; }
+.modes button { font: inherit; font-size: 14px; border: 0; background: transparent; color: var(--muted); padding: 6px 14px; border-radius: 999px; cursor: pointer; }
+.modes button[aria-pressed="true"] { background: var(--accent); color: var(--surface); font-weight: 700; }
+.dial { position: relative; width: min(280px, 78vw); aspect-ratio: 1; max-width: 100%; }
+.dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.dial circle { fill: none; stroke-width: 6; }
+.dial .track { stroke: var(--line); }
+.dial .bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .4s linear; }
+.readout { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+.time { font-family: var(--font-num); font-size: clamp(48px, 16vw, 64px); font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.label { font-size: 13px; color: var(--muted); }
+.controls { display: flex; gap: 12px; }
+.btn { font: inherit; font-weight: 700; border-radius: 12px; padding: 12px 22px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); min-width: 120px; }
+button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.beads { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.bead { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--focus); }
+.bead.on { background: var(--focus); }
+.settings { width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.settings label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); min-width: 0; }
+.settings input { font-family: var(--font-num); font-size: 16px; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); }
+.stats { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hint { font-size: 12px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .dial .bar { transition: none; } }
+</style>
+
+<main class="wrap">
+  <h1>ポモドーロ集中タイマー</h1>
+
+  <div class="modes" role="group" aria-label="モード">
+    <button id="m-focus" data-mode="focus" aria-pressed="true">集中</button>
+    <button id="m-short" data-mode="short" aria-pressed="false">小休憩</button>
+    <button id="m-long" data-mode="long" aria-pressed="false">長休憩</button>
+  </div>
+
+  <div class="dial">
+    <svg viewBox="0 0 120 120" aria-hidden="true">
+      <circle class="track" cx="60" cy="60" r="54"></circle>
+      <circle class="bar" id="bar" cx="60" cy="60" r="54"></circle>
+    </svg>
+    <div class="readout">
+      <div class="time" id="time" aria-live="off">25:00</div>
+      <div class="label" id="label">集中する時間</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="start">スタート</button>
+    <button class="btn" id="reset">リセット</button>
+    <button class="btn" id="skip">スキップ</button>
+  </div>
+
+  <div class="beads" aria-label="長休憩までの進み具合">
+    <span id="beads"></span><span id="beadText"></span>
+  </div>
+
+  <div class="settings">
+    <label for="s-focus">集中（分）<input id="s-focus" type="number" min="1" max="120" value="25"></label>
+    <label for="s-short">小休憩（分）<input id="s-short" type="number" min="1" max="60" value="5"></label>
+    <label for="s-long">長休憩（分）<input id="s-long" type="number" min="1" max="60" value="15"></label>
+  </div>
+
+  <div class="stats" id="stats">今日の集中：0 回（0 分）</div>
+  <div class="hint">スペースキーでスタート / 一時停止。4回集中すると長休憩になります。</div>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const LABELS = { focus: "集中する時間", short: "ひと息つく時間", long: "しっかり休む時間" };
+  const CIRC = 2 * Math.PI * 54;
+  const bar = $("bar");
+  bar.style.strokeDasharray = CIRC;
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  };
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  const saved = store.get("pomo-settings", null);
+  if (saved) for (const k of ["focus", "short", "long"]) if (saved[k]) $("s-" + k).value = saved[k];
+
+  let mode = "focus", total = 0, remaining = 0, endAt = 0, tick = null, done = 0;
+  let stats = store.get("pomo-stats", { day: today(), count: 0, minutes: 0 });
+  if (stats.day !== today()) stats = { day: today(), count: 0, minutes: 0 };
+
+  const minutesFor = m => Math.max(1, Math.min(120, parseInt($("s-" + m).value, 10) || 1));
+  const fmt = s => String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+
+  function render() {
+    const s = Math.ceil(remaining / 1000);
+    $("time").textContent = fmt(s);
+    $("label").textContent = LABELS[mode];
+    bar.style.strokeDashoffset = CIRC * (1 - remaining / total);
+    document.body.classList.toggle("rest", mode !== "focus");
+    document.title = tick ? `${fmt(s)} ${mode === "focus" ? "集中" : "休憩"}` : "ポモドーロ集中タイマー";
+    for (const b of document.querySelectorAll(".modes button")) b.setAttribute("aria-pressed", b.dataset.mode === mode);
+    $("start").textContent = tick ? "一時停止" : (remaining < total ? "再開" : "スタート");
+    const k = done % 4;
+    $("beads").innerHTML = "";
+    for (let i = 0; i < 4; i++) { const d = document.createElement("span"); d.className = "bead" + (i < k ? " on" : ""); $("beads").appendChild(d); }
+    $("beadText").textContent = ` 長休憩まであと ${4 - k} 回`;
+    $("stats").textContent = `今日の集中：${stats.count} 回（${stats.minutes} 分）`;
+  }
+
+  function setMode(m) {
+    stop(); mode = m; total = remaining = minutesFor(m) * 60000; render();
+  }
+  function stop() { clearInterval(tick); tick = null; }
+  function start() {
+    endAt = Date.now() + remaining;
+    tick = setInterval(() => {
+      remaining = Math.max(0, endAt - Date.now());
+      if (remaining === 0) finish(); else render();
+    }, 250);
+    render();
+  }
+
+  let ctx = null;
+  function chime() {
+    try {
+      ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+      [0, .25, .5].forEach((t, i) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.frequency.value = [660, 880, 990][i];
+        g.gain.setValueAtTime(.001, ctx.currentTime + t);
+        g.gain.exponentialRampToValueAtTime(.25, ctx.currentTime + t + .02);
+        g.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + t + .4);
+        o.connect(g).connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + .45);
+      });
+    } catch {}
+  }
+
+  function finish(skipped) {
+    stop();
+    if (!skipped) chime();
+    if (mode === "focus") {
+      if (!skipped) { stats.count++; stats.minutes += Math.round(total / 60000); store.set("pomo-stats", stats); }
+      done++;
+      setMode(done % 4 === 0 ? "long" : "short");
+    } else {
+      setMode("focus");
+    }
+  }
+
+  $("start").onclick = () => { if (ctx === null) { try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } tick ? (stop(), render()) : start(); };
+  $("reset").onclick = () => setMode(mode);
+  $("skip").onclick = () => finish(true);
+  for (const b of document.querySelectorAll(".modes button")) b.onclick = () => setMode(b.dataset.mode);
+  for (const k of ["focus", "short", "long"]) $("s-" + k).addEventListener("change", () => {
+    store.set("pomo-settings", { focus: minutesFor("focus"), short: minutesFor("short"), long: minutesFor("long") });
+    if (!tick && k === mode) setMode(mode);
+  });
+  document.addEventListener("keydown", e => {
+    if (e.code === "Space" && e.target.tagName !== "INPUT" && e.target.tagName !== "BUTTON") { e.preventDefault(); $("start").click(); }
+  });
+
+  setMode("focus");
+})();
+</script>
